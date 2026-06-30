@@ -557,6 +557,7 @@ class _KiroNativeLaunchConfig:
     workspace: Path
     terminal_launch_args: list[str] | None
     external_session_id: str | None
+    model_override: str | None = None
 
 
 def _required_runner_env(name: str) -> str:
@@ -672,12 +673,23 @@ async def _kiro_native_launch_config(
         not isinstance(external_session_id, str) or not external_session_id.strip()
     ):
         raise RuntimeError(f"Invalid external_session_id for Kiro session {session_id!r}.")
+    model_override = snapshot.get("model_override")
+    if model_override is not None:
+        if not isinstance(model_override, str) or not model_override:
+            raise RuntimeError(f"Invalid model_override for Kiro session {session_id!r}.")
+        try:
+            model_override = validate_model_override(model_override)
+        except ValueError as exc:
+            raise RuntimeError(
+                f"Invalid model_override for Kiro session {session_id!r}: {exc}"
+            ) from exc
     return _KiroNativeLaunchConfig(
         workspace=_kiro_session_workspace(session_workspace),
         terminal_launch_args=terminal_launch_args,
         external_session_id=external_session_id.strip()
         if isinstance(external_session_id, str)
         else None,
+        model_override=model_override if isinstance(model_override, str) else None,
     )
 
 
@@ -2715,6 +2727,7 @@ async def _auto_create_kiro_terminal(
     kiro_launch = build_kiro_launch(
         launch_config.terminal_launch_args or [],
         resume_id=launch_config.external_session_id,
+        model=launch_config.model_override,
     )
     launch_epoch_ms = int(time.time() * 1000)
     terminal_view = await resource_registry.launch_required_terminal(

@@ -568,6 +568,8 @@ async def test_serve_tunnel_once_sends_bearer_header(
         },
         "close_timeout": serve_module._RUNNER_TUNNEL_CLOSE_TIMEOUT_S,
         "max_size": serve_module.RUNNER_TUNNEL_MAX_MESSAGE_BYTES,
+        "ping_interval": serve_module.TUNNEL_KEEPALIVE_PING_INTERVAL_S,
+        "ping_timeout": serve_module.TUNNEL_KEEPALIVE_PING_TIMEOUT_S,
     }
     assert isinstance(captured["sent"], str)
 

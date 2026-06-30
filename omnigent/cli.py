@@ -2979,6 +2979,8 @@ def server(
 
     from omnigent.runner.transports.ws_tunnel.limits import (
         RUNNER_TUNNEL_MAX_MESSAGE_BYTES,
+        TUNNEL_KEEPALIVE_PING_INTERVAL_S,
+        TUNNEL_KEEPALIVE_PING_TIMEOUT_S,
     )
     from omnigent.server.app import create_app
     from omnigent.server.auth import create_auth_provider
@@ -3229,6 +3231,11 @@ def server(
             port=port,
             log_config=_server_uvicorn_log_config(),
             ws_max_size=RUNNER_TUNNEL_MAX_MESSAGE_BYTES,
+            # Server side of the runner/host tunnels' protocol keepalive, aligned
+            # to the 90 s app-level budget instead of uvicorn's 20 s default that
+            # drops a busy-but-healthy tunnel with 1011 — issue #1116.
+            ws_ping_interval=TUNNEL_KEEPALIVE_PING_INTERVAL_S,
+            ws_ping_timeout=TUNNEL_KEEPALIVE_PING_TIMEOUT_S,
             timeout_graceful_shutdown=_SERVER_GRACEFUL_SHUTDOWN_TIMEOUT_S,
         )
     finally:

@@ -39,6 +39,7 @@ from omnigent.spec.types import (
     AgentSpec,
     FunctionPolicySpec,
     FunctionRef,
+    GuardrailsSpec,
     LabelDef,
     LLMConfig,
     PolicySpec,
@@ -211,6 +212,39 @@ def _load_user_daily_cost(
     return state
 
 
+def _resolve_effective_guardrails(
+    spec: AgentSpec, conv: Conversation | None
+) -> GuardrailsSpec | None:
+    """The guardrails governing this session — the sub-agent's own when applicable.
+
+    A sub-agent session (created with a ``sub_agent_name``) is governed by
+    the named sub-agent's OWN ``guardrails:`` block, resolved from
+    ``spec.sub_agents`` — not the parent's top-level guardrails, which
+    govern the parent session. Inline sub-agents share the parent's
+    ``agent_id``, so the spec loaded for the session is always the
+    top-level bundle; without this resolution the sub-agent's declared
+    guardrails would be dead and the parent's would wrongly gate the child.
+
+    This is the spec-declared analogue of the root *session*-policy
+    inheritance handled in :func:`build_policy_engine`; the two compose
+    (inherited root session policies still prepend). When ``sub_agent_name``
+    matches no declared sub-agent (unexpected), falls back to the top-level
+    guardrails so the session is never left ungoverned.
+
+    :param spec: The parsed (top-level bundle) agent spec.
+    :param conv: The session conversation, or ``None`` when absent.
+    :returns: The :class:`GuardrailsSpec` to enforce, or ``None`` when the
+        resolved agent declares none.
+    """
+    sub_agent_name = conv.sub_agent_name if conv is not None else None
+    if not sub_agent_name:
+        return spec.guardrails
+    for sub in spec.sub_agents:
+        if sub.name == sub_agent_name:
+            return sub.guardrails
+    return spec.guardrails
+
+
 def build_policy_engine(
     *,
     spec: AgentSpec,
@@ -287,7 +321,10 @@ def build_policy_engine(
         connection.
     :returns: A :class:`PolicyEngine` ready for evaluation.
     """
-    guardrails = spec.guardrails
+    conv = conversation_store.get_conversation(conversation_id)
+    # A sub-agent session is governed by its OWN spec-declared guardrails,
+    # not the parent's top-level block. Resolve before reading policies.
+    guardrails = _resolve_effective_guardrails(spec, conv)
     agent_policy_specs: list[PolicySpec] = list(guardrails.policies or []) if guardrails else []
     session_policy_specs = _load_session_policy_specs(conversation_id, policy_store)
     # Session policies are per-conversation, but sub-agents must inherit
@@ -296,7 +333,6 @@ def build_policy_engine(
     # children. Load root policies and prepend them (root policies run
     # first, then any child-specific overrides, matching the cost-budget
     # root-seeding pattern below).
-    conv = conversation_store.get_conversation(conversation_id)
     root_conversation_id = conv.root_conversation_id if conv is not None else conversation_id
     if root_conversation_id != conversation_id:
         root_policy_specs = _load_session_policy_specs(root_conversation_id, policy_store)

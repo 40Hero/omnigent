@@ -430,19 +430,15 @@ def _ensure_default_agents(
     :param artifact_store: Store for agent bundles.
     :param agent_cache: Cache for loaded agent specs.
     """
-    _ensure_default_claude_agent(agent_store, artifact_store, agent_cache)
-    _ensure_default_codex_agent(agent_store, artifact_store, agent_cache)
-    _ensure_default_pi_agent(agent_store, artifact_store, agent_cache)
-    _ensure_default_opencode_agent(agent_store, artifact_store, agent_cache)
-    _ensure_default_cursor_agent(agent_store, artifact_store, agent_cache)
-    _ensure_default_kiro_agent(agent_store, artifact_store, agent_cache)
-    _ensure_default_goose_agent(agent_store, artifact_store, agent_cache)
-    _ensure_default_hermes_agent(agent_store, artifact_store, agent_cache)
-    _ensure_default_antigravity_agent(agent_store, artifact_store, agent_cache)
-    _ensure_default_qwen_agent(agent_store, artifact_store, agent_cache)
-    _ensure_default_kimi_native_agent(agent_store, artifact_store, agent_cache)
-    _ensure_default_debby_agent(agent_store, artifact_store, agent_cache)
-    _ensure_default_polly_agent(agent_store, artifact_store, agent_cache)
+    # Packaged defaults are gated by OMNIGENT_DEFAULT_AGENTS: an unset/empty
+    # env seeds every one (upstream behavior), an explicit comma-list seeds
+    # only the named keys so a deployment can trim the harness tiles it never
+    # uses. `_ensure_extra_builtin_agents` (operator-supplied agents via
+    # OMNIGENT_BUILTIN_AGENT_DIRS) is NOT gated — those are always seeded.
+    allow = _selected_default_agent_keys(os.environ.get(_DEFAULT_AGENTS_ENV))
+    for key, seed in _DEFAULT_AGENT_SEEDERS:
+        if allow is None or key in allow:
+            seed(agent_store, artifact_store, agent_cache)
     _ensure_extra_builtin_agents(agent_store, artifact_store, agent_cache)
 
 
@@ -1058,6 +1054,53 @@ def _ensure_default_polly_agent(
         name=_POLLY_AGENT_NAME,
         bundle_bytes=_build_polly_bundle(),
     )
+
+
+# Env var (comma-separated allowlist) that trims which PACKAGED default
+# agents/harness tiles seed at startup. Unset or empty = seed all (upstream
+# behavior — backward compatible). Keys are the short aliases in
+# ``_DEFAULT_AGENT_SEEDERS`` (e.g. ``"claude,codex,polly"``). Unknown keys are
+# ignored. Operator agents from ``OMNIGENT_BUILTIN_AGENT_DIRS`` are unaffected.
+_DEFAULT_AGENTS_ENV = "OMNIGENT_DEFAULT_AGENTS"
+
+# Ordered (key, seeder) registry for the packaged defaults. Order is the
+# picker/seed order; the key is the stable allowlist alias.
+_DEFAULT_AGENT_SEEDERS: tuple[tuple[str, Any], ...] = (
+    ("claude", _ensure_default_claude_agent),
+    ("codex", _ensure_default_codex_agent),
+    ("pi", _ensure_default_pi_agent),
+    ("opencode", _ensure_default_opencode_agent),
+    ("cursor", _ensure_default_cursor_agent),
+    ("kiro", _ensure_default_kiro_agent),
+    ("goose", _ensure_default_goose_agent),
+    ("hermes", _ensure_default_hermes_agent),
+    ("antigravity", _ensure_default_antigravity_agent),
+    ("qwen", _ensure_default_qwen_agent),
+    ("kimi", _ensure_default_kimi_native_agent),
+    ("debby", _ensure_default_debby_agent),
+    ("polly", _ensure_default_polly_agent),
+)
+
+# The recognized allowlist keys — single source of truth derived from the
+# seeder registry (so the two can't drift).
+_DEFAULT_AGENT_SEEDER_KEYS: tuple[str, ...] = tuple(k for k, _ in _DEFAULT_AGENT_SEEDERS)
+
+
+def _selected_default_agent_keys(raw: str | None) -> list[str] | None:
+    """Parse ``OMNIGENT_DEFAULT_AGENTS`` into a seeder allowlist.
+
+    :param raw: The raw env value, or ``None`` when unset.
+    :returns: ``None`` when the caller should seed every packaged default
+        (env unset, empty, or only separators) — the backward-compatible
+        path. Otherwise the recognized keys (trimmed, lowercased, unknowns
+        dropped); may be ``[]`` when every entry was unrecognized.
+    """
+    if raw is None:
+        return None
+    keys = [k.strip().lower() for k in raw.split(",") if k.strip()]
+    if not keys:
+        return None
+    return [k for k in keys if k in _DEFAULT_AGENT_SEEDER_KEYS]
 
 
 def create_app(

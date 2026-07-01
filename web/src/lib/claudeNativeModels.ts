@@ -10,8 +10,8 @@
  */
 export const CLAUDE_NATIVE_MODELS = [
   // Ordered by capability tier, most powerful first.
-  // Fable temporarily withheld while Anthropic has Fable access disabled.
-  // { id: "fable", label: "Fable" },
+  // Fable re-enabled 2026-07-01 (40Hero fork): Anthropic restored Fable access.
+  { id: "fable", label: "Fable" },
   { id: "opus", label: "Opus" },
   { id: "sonnet", label: "Sonnet" },
   { id: "haiku", label: "Haiku" },

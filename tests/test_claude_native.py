@@ -6183,3 +6183,43 @@ def test_claude_transcript_records_handles_compaction_item() -> None:
         str(r.get("message", {}).get("content", "")) for r in records if r.get("type") == "user"
     ]
     assert any("after compaction" in t for t in user_texts)
+
+
+def test_claude_transcript_records_strip_image_base64_from_tool_output() -> None:
+    """Image tool-result base64 is dropped on resume to avoid context blowup."""
+    base64_blob = "iVBORw0KGgo" + ("A" * 4000)
+    tool_output = json.dumps(
+        [
+            {"type": "text", "text": "screenshot captured"},
+            {
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": "image/png",
+                    "data": base64_blob,
+                },
+            },
+        ],
+        separators=(",", ":"),
+    )
+    items: list[dict[str, Any]] = [
+        {
+            "id": "fco_img_1",
+            "response_id": "resp_1",
+            "type": "function_call_output",
+            "call_id": "toolu_img_1",
+            "output": tool_output,
+        },
+    ]
+    records = claude_native._claude_transcript_records_from_session_items(
+        items,
+        session_id="conv_test",
+        external_session_id="02857840-6362-408f-b41f-309e396ed7c6",
+        cwd=Path("/tmp/test"),
+    )
+    serialized = json.dumps(records)
+    # The megabyte-scale base64 payload must not survive into the resume transcript.
+    assert base64_blob not in serialized
+    # The surrounding text and a human-readable placeholder should remain.
+    assert "screenshot captured" in serialized
+    assert "image omitted" in serialized

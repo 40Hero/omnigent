@@ -3594,6 +3594,44 @@ def _claude_transcript_records_from_session_items(
     return records
 
 
+_RESUME_IMAGE_PLACEHOLDER = "[image omitted on resume]"
+
+
+def _strip_image_data_from_tool_output(output: str) -> str:
+    """
+    Drop base64 image payloads from a stored tool-result output string.
+
+    Claude records an image tool result as a JSON-serialized block list,
+    e.g. ``[{"type":"text",...},{"type":"image","source":{"type":"base64",
+    "data":"<megabytes>"}}]``. Replayed verbatim into a synthesized resume
+    transcript, that base64 is re-tokenized as text and can blow the context
+    window (a viewed screenshot alone can dwarf a 1M-token budget). Replace
+    each image block with a short text placeholder so resume stays bounded.
+
+    :param output: Stored ``function_call_output`` string, e.g. the JSON
+        block list above or a plain text tool result.
+    :returns: The output with image payloads replaced, or the original
+        string unchanged when it holds no image blocks.
+    """
+    try:
+        parsed = json.loads(output)
+    except (json.JSONDecodeError, ValueError):
+        return output
+    if not isinstance(parsed, list):
+        return output
+    stripped = False
+    new_blocks: list[object] = []
+    for block in parsed:
+        if isinstance(block, dict) and block.get("type") == "image":
+            new_blocks.append({"type": "text", "text": _RESUME_IMAGE_PLACEHOLDER})
+            stripped = True
+        else:
+            new_blocks.append(block)
+    if not stripped:
+        return output
+    return json.dumps(new_blocks, separators=(",", ":"))
+
+
 def _claude_transcript_record_from_session_item(
     item: dict[str, Any],
     *,
@@ -3670,6 +3708,7 @@ def _claude_transcript_record_from_session_item(
         output = item.get("output")
         if not isinstance(output, str):
             output = "" if output is None else json.dumps(output, separators=(",", ":"))
+        output = _strip_image_data_from_tool_output(output)
         record_type = "user"
         message = {
             "role": "user",

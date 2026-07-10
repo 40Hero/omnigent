@@ -428,6 +428,32 @@ def test_ucode_config_for_profile_sets_custom_model_option_for_second_sonnet(
     assert config.env["ANTHROPIC_CUSTOM_MODEL_OPTION_NAME"] == "Sonnet 5"
 
 
+def test_build_native_claude_terminal_env_pins_sonnet_5_without_ucode() -> None:
+    """
+    A bare-subscription login (``claude_config is None``, no ucode/provider
+    match) has no gateway id to pin the custom ``/model`` slot to. Default
+    it to the real Anthropic id so "Sonnet 5" works direct-to-API too,
+    matching the ucode path's behavior for gateway workspaces.
+    """
+    terminal_env = claude_native.build_native_claude_terminal_env(None)
+
+    assert terminal_env["ANTHROPIC_CUSTOM_MODEL_OPTION"] == "claude-sonnet-5"
+    assert terminal_env["ANTHROPIC_CUSTOM_MODEL_OPTION_NAME"] == "Sonnet 5"
+
+
+def test_build_native_claude_terminal_env_keeps_ucode_custom_model_option() -> None:
+    """A ucode/provider config's own custom-model pin is never overridden."""
+    config = claude_native.ClaudeNativeUcodeConfig(
+        env={"ANTHROPIC_CUSTOM_MODEL_OPTION": "databricks-claude-sonnet-5"},
+        api_key_helper="printf token",
+        model="databricks-claude-sonnet-4-6",
+    )
+
+    terminal_env = claude_native.build_native_claude_terminal_env(config)
+
+    assert terminal_env["ANTHROPIC_CUSTOM_MODEL_OPTION"] == "databricks-claude-sonnet-5"
+
+
 def test_ucode_config_for_profile_omits_model_tier_vars_when_no_claude_models(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

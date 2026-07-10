@@ -332,6 +332,15 @@ def build_native_claude_terminal_env(
                 f"carries a raw {_ANTHROPIC_API_KEY_ENV}; the credential must reach "
                 "Claude Code via the helper, not the environment."
             )
+    # ponytail: the ucode/Databricks path (above) pins the "sonnet_5" custom
+    # /model slot to a workspace-specific gateway id. A bare subscription
+    # login (claude_config is None, no ucode/provider match) never gets
+    # that env var, so the picker's "Sonnet 5" row is a no-op there. Pin
+    # it to the real Anthropic id so it works direct-to-API too, unless
+    # ucode already claimed the slot for its own gateway id.
+    if _ANTHROPIC_CUSTOM_MODEL_OPTION_ENV not in terminal_env:
+        terminal_env[_ANTHROPIC_CUSTOM_MODEL_OPTION_ENV] = "claude-sonnet-5"
+        terminal_env[_ANTHROPIC_CUSTOM_MODEL_OPTION_NAME_ENV] = _UCODE_CLAUDE_CUSTOM_TIER_LABEL
     return terminal_env
 
 

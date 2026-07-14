@@ -265,6 +265,33 @@ async def test_decide_permission_ask_without_handler_fails_closed() -> None:
     assert await ex._decide_permission({"toolCall": {"title": "shell"}}) is False
 
 
+@pytest.mark.asyncio
+async def test_decide_permission_strict_fails_closed_on_no_bridge() -> None:
+    """strict=True (the grok gate) denies when no policy/elicitation is wired.
+
+    The non-strict default still allows (test_decide_permission_allows_with_no_gates),
+    so generic ACP agents are unchanged.
+    """
+    ex = AcpExecutor(AcpAgentConfig(command="x"))
+    assert await ex._decide_permission({"toolCall": {"title": "shell"}}, strict=True) is False
+
+
+@pytest.mark.asyncio
+async def test_decide_permission_strict_denies_on_policy_exception() -> None:
+    """strict=True denies when the policy evaluator raises (never falls open)."""
+    ex = AcpExecutor(AcpAgentConfig(command="x"))
+    ex._policy_evaluator = AsyncMock(side_effect=RuntimeError("policy backend down"))
+    # non-strict would fall through to elicitation/allow; strict denies.
+    assert await ex._decide_permission({"toolCall": {"title": "shell"}}, strict=True) is False
+
+
+def test_grok_command_is_detected_across_argv() -> None:
+    """The grok gate keys on any argv token so wrappers are still gated."""
+    assert AcpExecutor(AcpAgentConfig(command="grok agent stdio"))._is_grok is True
+    assert AcpExecutor(AcpAgentConfig(command="/usr/bin/env grok agent stdio"))._is_grok is True
+    assert AcpExecutor(AcpAgentConfig(command="gemini --experimental-acp"))._is_grok is False
+
+
 # ---------------------------------------------------------------------------
 # interrupt → session/cancel
 # ---------------------------------------------------------------------------

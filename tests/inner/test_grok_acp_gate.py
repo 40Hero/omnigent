@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import urllib.error
 import urllib.request
 
 import pytest
@@ -37,15 +38,18 @@ def test_payload_non_dict_input_wrapped() -> None:
     assert params["toolCall"]["rawInput"] == {"value": "raw-string"}
 
 
-def _post(url: str, payload: dict) -> dict:
+def _post(url: str, payload: dict, token: str | None = None) -> dict:
+    headers = {"Content-Type": "application/json"}
+    if token is not None:
+        headers["X-Omnigent-Gate-Token"] = token
     req = urllib.request.Request(
-        url,
-        data=json.dumps(payload).encode(),
-        headers={"Content-Type": "application/json"},
-        method="POST",
+        url, data=json.dumps(payload).encode(), headers=headers, method="POST"
     )
-    with urllib.request.urlopen(req, timeout=10) as resp:
-        return json.loads(resp.read().decode())
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return json.loads(resp.read().decode())
+    except urllib.error.HTTPError as exc:  # 403 unauthorized still returns a deny body
+        return json.loads(exc.read().decode())
 
 
 def _gate_url(gate: GrokAcpGate) -> str:
@@ -67,14 +71,14 @@ async def test_gate_bridges_allow_and_deny(tmp_path) -> None:
     gate = GrokAcpGate(decide, asyncio.get_running_loop())
     gate.start(real_grok_home=tmp_path)  # empty source: no auth copy needed for this test
     try:
-        url = _gate_url(gate)
+        url, tok = _gate_url(gate), gate._token  # type: ignore[attr-defined]
         payload = {"toolName": "run_terminal_command", "toolInput": {"command": "x"}}
 
         verdict["allow"] = True
-        assert (await asyncio.to_thread(_post, url, payload))["decision"] == "allow"
+        assert (await asyncio.to_thread(_post, url, payload, tok))["decision"] == "allow"
 
         verdict["allow"] = False
-        assert (await asyncio.to_thread(_post, url, payload))["decision"] == "deny"
+        assert (await asyncio.to_thread(_post, url, payload, tok))["decision"] == "deny"
     finally:
         gate.close()
 
@@ -89,14 +93,60 @@ async def test_gate_fails_closed_when_decider_raises(tmp_path) -> None:
     gate = GrokAcpGate(boom, asyncio.get_running_loop())
     gate.start(real_grok_home=tmp_path)
     try:
-        decision = (await asyncio.to_thread(_post, _gate_url(gate), {"toolName": "x"}))["decision"]
-        assert decision == "deny"
+        out = await asyncio.to_thread(_post, _gate_url(gate), {"toolName": "x"}, gate._token)  # type: ignore[attr-defined]
+        assert out["decision"] == "deny"
     finally:
         gate.close()
 
 
-def test_gate_provisions_hook_and_grok_home(tmp_path) -> None:
-    """start() writes an unmatched PreToolUse hook carrying the gate URL."""
+@pytest.mark.asyncio
+async def test_gate_rejects_untokened_request(tmp_path) -> None:
+    """A request without the per-session token is denied (no local spoofing)."""
+    allowed = {"n": 0}
+
+    async def decide(params: dict) -> bool:
+        allowed["n"] += 1
+        return True
+
+    gate = GrokAcpGate(decide, asyncio.get_running_loop())
+    gate.start(real_grok_home=tmp_path)
+    try:
+        out = await asyncio.to_thread(_post, _gate_url(gate), {"toolName": "x"}, None)
+        assert out["decision"] == "deny"
+        assert allowed["n"] == 0, "decider must not run for an untokened request"
+        # wrong token also rejected
+        out2 = await asyncio.to_thread(_post, _gate_url(gate), {"toolName": "x"}, "wrong")
+        assert out2["decision"] == "deny"
+    finally:
+        gate.close()
+
+
+@pytest.mark.asyncio
+async def test_gate_denies_truncated_input(tmp_path) -> None:
+    """A truncated tool input is unjudgeable -> deny before the decider runs."""
+    ran = {"n": 0}
+
+    async def decide(params: dict) -> bool:
+        ran["n"] += 1
+        return True
+
+    gate = GrokAcpGate(decide, asyncio.get_running_loop())
+    gate.start(real_grok_home=tmp_path)
+    try:
+        payload = {
+            "toolName": "run_terminal_command",
+            "toolInput": {"command": "rm"},
+            "toolInputTruncated": True,
+        }
+        out = await asyncio.to_thread(_post, _gate_url(gate), payload, gate._token)  # type: ignore[attr-defined]
+        assert out["decision"] == "deny"
+        assert ran["n"] == 0, "decider must not run on truncated input"
+    finally:
+        gate.close()
+
+
+def test_gate_provisions_hook_by_absolute_path_with_token(tmp_path) -> None:
+    """start() writes an unmatched PreToolUse hook run by absolute path (not -m)."""
 
     async def decide(params: dict) -> bool:
         return True
@@ -105,13 +155,15 @@ def test_gate_provisions_hook_and_grok_home(tmp_path) -> None:
         gate = GrokAcpGate(decide, asyncio.get_running_loop())
         gate.start(real_grok_home=tmp_path)
         try:
-            hook_file = json.loads(
-                (gate._home / "hooks" / "omnigent-gate.json").read_text()  # type: ignore[attr-defined]
-            )
+            home = gate._home  # type: ignore[attr-defined]
+            hook_file = json.loads((home / "hooks" / "omnigent-gate.json").read_text())
             pre = hook_file["hooks"]["PreToolUse"][0]["hooks"][0]
-            assert "grok_acp_hook" in pre["command"]
+            # invoked by absolute path to a copied script, never `-m` (no cwd shadow)
+            assert " -m " not in pre["command"]
+            assert str(home / "omnigent_grok_hook.py") in pre["command"]
+            assert (home / "omnigent_grok_hook.py").exists()
             assert pre["env"]["OMNIGENT_GROK_GATE_URL"].startswith("http://127.0.0.1:")
-            # no matcher -> fires for every tool
+            assert pre["env"]["OMNIGENT_GROK_GATE_TOKEN"] == gate._token  # type: ignore[attr-defined]
             assert "matcher" not in hook_file["hooks"]["PreToolUse"][0]
         finally:
             gate.close()

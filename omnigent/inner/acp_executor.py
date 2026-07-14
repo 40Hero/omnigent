@@ -57,6 +57,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from omnigent.grok_acp_gate import GrokAcpGate
 from omnigent.inner._acp_omnigent_mcp import OmnigentAcpMcp
 from omnigent.inner.datamodel import OSEnvSandboxSpec, OSEnvSpec
 from omnigent.inner.executor import (
@@ -250,6 +251,19 @@ class AcpExecutor(Executor):
         if not self._argv:
             raise ValueError("AcpAgentConfig.command is empty")
 
+        # Grok auto-executes tools over ACP (never sends session/request_permission),
+        # so it can't be gated the normal way. When the command launches grok we
+        # provision a PreToolUse hook that bridges every tool call back to
+        # _decide_permission (see omnigent.grok_acp_gate). Keyed on the binary name
+        # because the x.ai/hooks capability is only learnable post-handshake, too late
+        # to set GROK_HOME. We scan every argv token (not just argv[0]) so wrappers
+        # like `env grok agent stdio` and `grok.exe` are still gated. No other ACP
+        # agent is affected.
+        self._is_grok: bool = any(
+            os.path.basename(tok) in ("grok", "grok.exe") for tok in self._argv
+        )
+        self._grok_gate: GrokAcpGate | None = None
+
         self._proc: asyncio.subprocess.Process | None = None  # type: ignore[name-defined]
         self._queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()  # type: ignore[explicit-any]
         self._reader_task: asyncio.Task[None] | None = None
@@ -305,6 +319,29 @@ class AcpExecutor(Executor):
         self._initialized = False
         self._image_supported = False
         env = os.environ.copy()
+        if self._is_grok:
+            # Fail closed: grok's PreToolUse hooks are fail-OPEN if the hook cannot
+            # spawn. Under an active OS sandbox the hook's interpreter may sit
+            # outside the read roots, so the gate can't be guaranteed — refuse
+            # rather than run grok with an egress gate that silently disappears.
+            sandbox = getattr(self._os_env, "sandbox", None) if self._os_env is not None else None
+            if sandbox is not None and getattr(sandbox, "type", "none") != "none":
+                raise RuntimeError(
+                    "grok tool-egress gate cannot be guaranteed under an OS sandbox "
+                    "(the PreToolUse hook interpreter may be unreachable); refusing to "
+                    "run grok ungated. Extend the sandbox read roots to cover the "
+                    "interpreter + GROK_HOME to lift this."
+                )
+            # Provision the tool-egress gate and point grok's config dir at it, so
+            # every tool call routes through _decide_permission (strict: fail closed)
+            # before running.
+            if self._grok_gate is None:
+                self._grok_gate = GrokAcpGate(
+                    lambda params: self._decide_permission(params, strict=True),
+                    asyncio.get_running_loop(),
+                )
+                self._grok_gate.start()
+            env["GROK_HOME"] = self._grok_gate.grok_home
         launch_path, argv = self._sandbox_launch(tuple(env.keys()))
         _STREAM_LIMIT = 16 * 1024 * 1024
         self._proc = await asyncio.create_subprocess_exec(
@@ -666,7 +703,9 @@ class AcpExecutor(Executor):
             args = {}
         return str(name), args
 
-    async def _decide_permission(self, params: dict[str, Any]) -> bool:  # type: ignore[explicit-any]
+    async def _decide_permission(  # type: ignore[explicit-any]
+        self, params: dict[str, Any], *, strict: bool = False
+    ) -> bool:
         """Decide allow/deny for a permission request — policy then elicitation.
 
         1. **TOOL_CALL policy** (:attr:`_policy_evaluator`): a hard
@@ -679,6 +718,12 @@ class AcpExecutor(Executor):
         When neither bridge is wired (standalone / unit tests), falls back to
         allow so direct use of the executor isn't blocked. In normal runner
         operation the adapter installs both, so destructive actions are gated.
+
+        :param strict: fail CLOSED instead of open. A policy-eval exception and a
+            missing policy verdict / bridge both deny (used by the grok gate,
+            where this call IS the sole enforcement point and an open fall-through
+            would let a tool run). Left ``False`` for every other ACP agent so
+            their behavior is unchanged.
         """
         tool_name, tool_input = self._extract_tool_call(params)
         handler = getattr(self, "_elicitation_handler", None)
@@ -693,6 +738,9 @@ class AcpExecutor(Executor):
                 action = getattr(verdict, "action", None)
             except Exception as exc:  # noqa: BLE001 — fail open to elicitation
                 logger.warning("acp TOOL_CALL policy eval failed for %s: %s", tool_name, exc)
+                if strict:
+                    logger.info("acp strict gate: policy eval error -> deny tool=%s", tool_name)
+                    return False
                 action = None
             if action == "POLICY_ACTION_DENY":
                 logger.info("acp permission denied by policy: tool=%s", tool_name)
@@ -711,6 +759,12 @@ class AcpExecutor(Executor):
                     tool_name,
                 )
                 return allowed
+            if strict and action == "POLICY_ACTION_ALLOW":
+                # Strict (grok gate): the policy verdict is authoritative, so an
+                # explicit ALLOW allows without also falling through to the strict
+                # no-verdict deny below. (Non-strict keeps its belt-and-suspenders
+                # fall-through to elicitation.)
+                return True
             # ALLOW / UNSPECIFIED / unknown → fall through to elicitation.
 
         if handler is not None:
@@ -722,6 +776,9 @@ class AcpExecutor(Executor):
             )
             return allowed
 
+        if strict:
+            logger.info("acp strict gate: no policy verdict/bridge -> deny tool=%s", tool_name)
+            return False
         logger.debug("acp permission allowed (no policy/elicitation wired): tool=%s", tool_name)
         return True
 
@@ -1118,6 +1175,10 @@ class AcpExecutor(Executor):
         # Tear down the Omnigent MCP relay HTTP server + its bridge dir first.
         with contextlib.suppress(Exception):
             self._mcp.close()
+        if self._grok_gate is not None:
+            with contextlib.suppress(Exception):
+                self._grok_gate.close()
+            self._grok_gate = None
         if self._reader_task:
             self._reader_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):

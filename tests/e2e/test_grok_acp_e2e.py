@@ -90,26 +90,15 @@ async def test_grok_acp_streams_and_completes(tmp_path: Path) -> None:
     )
 
 
-@pytest.mark.xfail(
-    reason=(
-        "KNOWN GAP (circuit breaker, see _specs/grok-native-harness/DECISIONS-NEEDED.md): "
-        "grok over `grok agent stdio` auto-executes tools and never emits "
-        "session/request_permission, so the generic AcpExecutor policy gate is never "
-        "consulted. A dynamic CEL gate for grok needs grok-specific code (a new bet); "
-        "this test asserts the desired end-state and stays xfail until that lands."
-    ),
-    strict=True,
-)
 @pytest.mark.asyncio
 async def test_grok_acp_deny_blocks_tool(tmp_path: Path) -> None:
-    """Slice 02 value proof: a CEL DENY blocks grok's shell tool before it runs.
+    """A CEL DENY blocks grok's shell tool before it runs (grok-acp-gate).
 
     A sentinel file is the side-effect probe: grok is asked to create it via the
-    shell. Under a DENY policy the ``session/request_permission`` is rejected, so
-    the tool never executes and the file must NOT exist afterward.
-
-    Currently xfail: grok auto-executes the tool (no permission request), so the
-    sentinel IS created and this fails as expected. See DECISIONS-NEEDED.md.
+    shell. Grok auto-executes tools over ACP, so the gate is enforced by a
+    provisioned PreToolUse hook (omnigent.grok_acp_gate) that bridges every tool
+    call back to _decide_permission; under a DENY policy the tool never executes
+    and the file must NOT exist afterward.
     """
     sentinel = tmp_path / "grok-gate-proof.txt"
     denied: list[dict] = []
@@ -146,3 +135,93 @@ async def test_grok_acp_deny_blocks_tool(tmp_path: Path) -> None:
         "DENY policy failed to block grok's shell tool — the sentinel file was created"
     )
     assert denied, "policy evaluator was never consulted — the tool was not gated"
+
+
+class _AllowVerdict:
+    """A TOOL_CALL policy verdict that allows the tool outright."""
+
+    action = "POLICY_ACTION_ALLOW"
+
+
+async def _run_touch(executor: AcpExecutor, sentinel: Path) -> None:
+    """Drive one grok turn that asks for a shell `touch <sentinel>`."""
+    try:
+        async for ev in executor.run_turn(
+            [
+                {
+                    "role": "user",
+                    "content": (
+                        f"Use the shell tool to run exactly: touch {sentinel}. "
+                        "Do not do anything else."
+                    ),
+                }
+            ],
+            tools=[],
+            system_prompt="You are a helpful coding agent. Use the shell tool when asked.",
+        ):
+            if isinstance(ev, ExecutorError):
+                break
+    finally:
+        await executor.close()
+
+
+@pytest.mark.asyncio
+async def test_grok_acp_allow_runs_tool(tmp_path: Path) -> None:
+    """ALLOW lets grok's shell tool run — the gate is not a blanket block."""
+    sentinel = tmp_path / "grok-allow-proof.txt"
+    seen: list[dict] = []
+
+    async def _policy(phase: str, tool: dict) -> _AllowVerdict:
+        seen.append({"phase": phase, "tool": tool})
+        return _AllowVerdict()
+
+    executor = _grok_executor(tmp_path)
+    executor._policy_evaluator = _policy  # type: ignore[attr-defined]
+    await _run_touch(executor, sentinel)
+
+    assert seen, "policy evaluator was never consulted — the gate did not fire"
+    assert sentinel.exists(), "ALLOW policy wrongly blocked grok's shell tool"
+
+
+@pytest.mark.asyncio
+async def test_grok_acp_ask_approve_runs(tmp_path: Path) -> None:
+    """ASK routes to elicitation; on approval the tool runs."""
+    sentinel = tmp_path / "grok-ask-approve.txt"
+    elicited: list[tuple[str, dict]] = []
+
+    async def _policy(phase: str, tool: dict) -> _AskVerdict:
+        return _AskVerdict()
+
+    async def _elicit(tool_name: str, tool_input: dict) -> bool:
+        elicited.append((tool_name, tool_input))
+        return True  # user approves
+
+    executor = _grok_executor(tmp_path)
+    executor._policy_evaluator = _policy  # type: ignore[attr-defined]
+    executor._elicitation_handler = _elicit  # type: ignore[attr-defined]
+    await _run_touch(executor, sentinel)
+
+    assert elicited, "ASK verdict did not raise an elicitation"
+    assert sentinel.exists(), "approved ASK wrongly blocked grok's shell tool"
+
+
+@pytest.mark.asyncio
+async def test_grok_acp_ask_reject_blocks(tmp_path: Path) -> None:
+    """ASK routes to elicitation; on rejection the tool is blocked."""
+    sentinel = tmp_path / "grok-ask-reject.txt"
+    elicited: list[tuple[str, dict]] = []
+
+    async def _policy(phase: str, tool: dict) -> _AskVerdict:
+        return _AskVerdict()
+
+    async def _elicit(tool_name: str, tool_input: dict) -> bool:
+        elicited.append((tool_name, tool_input))
+        return False  # user rejects
+
+    executor = _grok_executor(tmp_path)
+    executor._policy_evaluator = _policy  # type: ignore[attr-defined]
+    executor._elicitation_handler = _elicit  # type: ignore[attr-defined]
+    await _run_touch(executor, sentinel)
+
+    assert elicited, "ASK verdict did not raise an elicitation"
+    assert not sentinel.exists(), "rejected ASK failed to block grok's shell tool"

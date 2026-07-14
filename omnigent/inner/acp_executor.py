@@ -57,6 +57,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from omnigent.grok_acp_gate import GrokAcpGate
 from omnigent.inner._acp_omnigent_mcp import OmnigentAcpMcp
 from omnigent.inner.datamodel import OSEnvSandboxSpec, OSEnvSpec
 from omnigent.inner.executor import (
@@ -250,6 +251,15 @@ class AcpExecutor(Executor):
         if not self._argv:
             raise ValueError("AcpAgentConfig.command is empty")
 
+        # Grok auto-executes tools over ACP (never sends session/request_permission),
+        # so it can't be gated the normal way. When the configured binary is grok we
+        # provision a PreToolUse hook that bridges every tool call back to
+        # _decide_permission (see omnigent.grok_acp_gate). Keyed on the binary name
+        # because the x.ai/hooks capability is only learnable post-handshake, too late
+        # to set GROK_HOME. No other ACP agent is affected.
+        self._is_grok: bool = os.path.basename(self._argv[0]) == "grok"
+        self._grok_gate: GrokAcpGate | None = None
+
         self._proc: asyncio.subprocess.Process | None = None  # type: ignore[name-defined]
         self._queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()  # type: ignore[explicit-any]
         self._reader_task: asyncio.Task[None] | None = None
@@ -305,6 +315,13 @@ class AcpExecutor(Executor):
         self._initialized = False
         self._image_supported = False
         env = os.environ.copy()
+        if self._is_grok:
+            # Provision the tool-egress gate and point grok's config dir at it,
+            # so every tool call routes through _decide_permission before running.
+            if self._grok_gate is None:
+                self._grok_gate = GrokAcpGate(self._decide_permission, asyncio.get_running_loop())
+                self._grok_gate.start()
+            env["GROK_HOME"] = self._grok_gate.grok_home
         launch_path, argv = self._sandbox_launch(tuple(env.keys()))
         _STREAM_LIMIT = 16 * 1024 * 1024
         self._proc = await asyncio.create_subprocess_exec(
@@ -1118,6 +1135,10 @@ class AcpExecutor(Executor):
         # Tear down the Omnigent MCP relay HTTP server + its bridge dir first.
         with contextlib.suppress(Exception):
             self._mcp.close()
+        if self._grok_gate is not None:
+            with contextlib.suppress(Exception):
+                self._grok_gate.close()
+            self._grok_gate = None
         if self._reader_task:
             self._reader_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):

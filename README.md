@@ -23,6 +23,7 @@ Omnigent is an open-source **meta-harness** that gives you a common orchestratio
 
 ## Why Omnigent?
 
+
 Omnigent lets you:
 
 - **📱 Work with agents from any device, including your phone.** Sessions

@@ -1,0 +1,97 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>grok-acp-gate — architecture</title>
+<style>
+  :root { color-scheme: only light; }
+  html,body { margin:0; padding:0; background:#f4f6f9; color:#12151c;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; }
+  .wrap { max-width:1060px; margin:0 auto; padding:28px 20px 48px; }
+  h1 { font-size:22px; margin:0 0 4px; color:#12151c; }
+  .sub { font-size:13px; color:#3a4150; margin:0 0 18px; }
+  .legend { display:flex; gap:18px; flex-wrap:wrap; font-size:12.5px; color:#262c38;
+    background:#fff; border:1px solid #d5dbe4; border-radius:8px; padding:10px 14px; margin:0 0 18px; }
+  .legend span { display:inline-flex; align-items:center; gap:7px; }
+  .sw { width:15px; height:15px; border-radius:3px; display:inline-block; border:1px solid #9aa4b2; }
+  .scroll { overflow-x:auto; }
+  .note { font-size:12.5px; color:#3a4150; margin:16px 0 0; line-height:1.5; }
+  .note b { color:#12151c; }
+  code { background:#e9edf2; padding:1px 5px; border-radius:4px; font-size:12px; color:#1a1f29; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>grok-acp-gate &mdash; dynamic CEL gate for grok tool calls</h1>
+  <p class="sub">Parent shipped the ungoverned turn. This bet adds the gate. The dashed gold path is the SPIKE unknown: does grok route <code>pre_tool_use</code> to the client?</p>
+
+  <div class="legend">
+    <span><i class="sw" style="background:#dfe7f3;border-color:#6c8ebf;"></i> Existing (reused)</span>
+    <span><i class="sw" style="background:#d9efe0;border-color:#3f9d68;"></i> Created this bet</span>
+    <span><i class="sw" style="background:#f6e2d6;border-color:#c8794a;"></i> External (xAI)</span>
+    <span><i class="sw" style="background:#fff2cc;border-color:#d6b656;"></i> SPIKE (unconfirmed)</span>
+    <span><i class="sw" style="background:#eceef2;border-color:#b6bcc6;"></i> Fallback (route B, not built)</span>
+  </div>
+
+  <div class="scroll">
+  <svg width="1010" height="500" viewBox="0 0 1010 500" role="img" aria-label="grok gate flow">
+    <!-- AcpExecutor -->
+    <rect x="40" y="60" width="300" height="150" rx="9" fill="#dfe7f3" stroke="#6c8ebf" stroke-width="1.5"/>
+    <text x="190" y="86" font-size="14" fill="#12151c" text-anchor="middle" font-weight="700">AcpExecutor (generic)</text>
+    <rect x="58" y="100" width="264" height="40" rx="6" fill="#d9efe0" stroke="#3f9d68" stroke-width="1.3"/>
+    <text x="190" y="118" font-size="11.5" fill="#12151c" text-anchor="middle" font-weight="600">initialize: advertise x.ai/hooks</text>
+    <text x="190" y="132" font-size="10.5" fill="#25502f" text-anchor="middle">set _xai_hooks_supported from result</text>
+    <rect x="58" y="150" width="264" height="44" rx="6" fill="#d9efe0" stroke="#3f9d68" stroke-width="1.3"/>
+    <text x="190" y="168" font-size="11.5" fill="#12151c" text-anchor="middle" font-weight="600">handle grok pre_tool_use request</text>
+    <text x="190" y="183" font-size="10.5" fill="#25502f" text-anchor="middle">-&gt; _decide_permission -&gt; answer grok</text>
+
+    <!-- policy -->
+    <rect x="40" y="300" width="300" height="80" rx="9" fill="#dfe7f3" stroke="#6c8ebf" stroke-width="1.5"/>
+    <text x="190" y="326" font-size="13.5" fill="#12151c" text-anchor="middle" font-weight="700">_decide_permission (reused)</text>
+    <text x="190" y="346" font-size="11" fill="#262c38" text-anchor="middle">policy evaluator: ALLOW / DENY / ASK</text>
+    <text x="190" y="362" font-size="11" fill="#262c38" text-anchor="middle">fail-closed -&gt; DENY on no verdict</text>
+
+    <!-- grok -->
+    <rect x="620" y="60" width="330" height="150" rx="9" fill="#f6e2d6" stroke="#c8794a" stroke-width="1.5"/>
+    <text x="785" y="88" font-size="14" fill="#12151c" text-anchor="middle" font-weight="700">grok agent stdio (xAI)</text>
+    <text x="785" y="112" font-size="11.5" fill="#262c38" text-anchor="middle">initialize advertises</text>
+    <text x="785" y="128" font-size="11.5" fill="#7a5b09" text-anchor="middle" font-weight="600">_meta.x.ai/hooks: {pre_tool_use, deny}</text>
+    <text x="785" y="152" font-size="11.5" fill="#262c38" text-anchor="middle">runs a tool -&gt; (does it ASK the client?)</text>
+    <text x="785" y="172" font-size="11" fill="#8a6d1a" text-anchor="middle" font-style="italic">today: auto-executes, no request = the gap</text>
+
+    <!-- flows -->
+    <!-- initialize handshake -->
+    <line x1="340" y1="120" x2="620" y2="120" stroke="#3f9d68" stroke-width="2" marker-end="url(#ag)"/>
+    <text x="480" y="112" font-size="10.5" fill="#25502f" text-anchor="middle">initialize (+x.ai/hooks)</text>
+    <!-- pre_tool_use request grok->executor (SPIKE, dashed gold) -->
+    <path d="M 620 175 H 480 V 172" fill="none" stroke="#b8860b" stroke-width="2.4" stroke-dasharray="6 4" marker-end="url(#ay)"/>
+    <line x1="480" y1="175" x2="340" y2="175" stroke="#b8860b" stroke-width="2.4" stroke-dasharray="6 4" marker-end="url(#ay)"/>
+    <text x="470" y="205" font-size="11" fill="#7a5b09" text-anchor="middle" font-weight="600">pre_tool_use request  ← SPIKE: confirmed by slice 01</text>
+    <!-- executor -> policy -->
+    <line x1="190" y1="210" x2="190" y2="300" stroke="#5a6273" stroke-width="2" marker-end="url(#ad)"/>
+    <text x="200" y="258" font-size="10.5" fill="#3a4150">PHASE_TOOL_CALL</text>
+    <!-- policy -> executor (verdict) -->
+    <line x1="230" y1="300" x2="230" y2="212" stroke="#5a6273" stroke-width="2" marker-end="url(#ad)"/>
+    <text x="240" y="258" font-size="10.5" fill="#3a4150">verdict</text>
+    <!-- executor -> grok answer -->
+    <path d="M 340 155 H 610" fill="none" stroke="#3f9d68" stroke-width="2" marker-end="url(#ag)"/>
+    <text x="475" y="148" font-size="10.5" fill="#25502f" text-anchor="middle">answer: {decision: deny|allow}</text>
+
+    <!-- fallback route B -->
+    <rect x="620" y="300" width="330" height="80" rx="9" fill="#eceef2" stroke="#b6bcc6" stroke-width="1.4" stroke-dasharray="4 3"/>
+    <text x="785" y="326" font-size="12.5" fill="#3a4150" text-anchor="middle" font-weight="600">Fallback route B (NOT built this bet)</text>
+    <text x="785" y="345" font-size="10.5" fill="#5a6273" text-anchor="middle">grok command-hook -&gt; HTTP /policies/evaluate</text>
+    <text x="785" y="361" font-size="10.5" fill="#5a6273" text-anchor="middle">only if spike shows route A dead -&gt; owner decides</text>
+
+    <defs>
+      <marker id="ag" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 z" fill="#3f9d68"/></marker>
+      <marker id="ay" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 z" fill="#b8860b"/></marker>
+      <marker id="ad" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 z" fill="#5a6273"/></marker>
+    </defs>
+  </svg>
+  </div>
+
+  <p class="note"><b>The gate in one sentence:</b> teach the generic <b>AcpExecutor</b> to advertise grok's <code>x.ai/hooks</code> capability at <code>initialize</code>, and when grok asks the client before running a tool (the dashed gold path &mdash; <b>the one thing slice 01 must prove grok actually does</b>), route that request through the already-built <code>_decide_permission</code> and answer deny or allow. If the spike shows grok never asks, route A is dead: the build STOPS and queues route B (the greyed command-hook path) for your decision rather than building it. The change is capability-gated, so gemini/goose/qwen behavior is untouched.</p>
+</div>
+</body>
+</html>

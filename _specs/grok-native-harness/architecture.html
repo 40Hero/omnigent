@@ -1,0 +1,128 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Grok-as-governed-Omnigent-harness — architecture</title>
+<style>
+  :root { color-scheme: only light; }
+  html,body { margin:0; padding:0; background:#f4f6f9; color:#12151c;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; }
+  .wrap { max-width:1080px; margin:0 auto; padding:28px 20px 48px; }
+  h1 { font-size:22px; margin:0 0 4px; color:#12151c; }
+  .sub { font-size:13px; color:#3a4150; margin:0 0 20px; }
+  .legend { display:flex; gap:20px; flex-wrap:wrap; font-size:12.5px; color:#262c38;
+    background:#ffffff; border:1px solid #d5dbe4; border-radius:8px; padding:10px 14px; margin:0 0 18px; }
+  .legend span { display:inline-flex; align-items:center; gap:7px; }
+  .sw { width:15px; height:15px; border-radius:3px; display:inline-block; border:1px solid #9aa4b2; }
+  .scroll { overflow-x:auto; }
+  svg { display:block; }
+  .note { font-size:12.5px; color:#3a4150; margin:18px 0 0; line-height:1.5; }
+  .note b { color:#12151c; }
+  code { background:#e9edf2; padding:1px 5px; border-radius:4px; font-size:12px; color:#1a1f29; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Grok as a governed Omnigent harness &mdash; via ACP</h1>
+  <p class="sub">The governed path: <code>acp:grok</code> on the existing generic <code>acp</code> harness. Almost everything is reused; only the shaded pieces are created this bet.</p>
+
+  <div class="legend">
+    <span><i class="sw" style="background:#dfe7f3;border-color:#6c8ebf;"></i> Existing Omnigent (reused)</span>
+    <span><i class="sw" style="background:#d9efe0;border-color:#3f9d68;"></i> Created / touched this bet</span>
+    <span><i class="sw" style="background:#f6e2d6;border-color:#c8794a;"></i> External (xAI)</span>
+    <span><i class="sw" style="background:#fff2cc;border-color:#d6b656;"></i> Governance boundary</span>
+    <span>&#9679; = frozen-contract seam</span>
+  </div>
+
+  <div class="scroll">
+  <svg width="1040" height="560" viewBox="0 0 1040 560" role="img" aria-label="Grok ACP harness data flow">
+    <!-- lane labels -->
+    <text x="20" y="30" font-size="12" fill="#5a6273" font-weight="600">CONFIG</text>
+    <text x="20" y="130" font-size="12" fill="#5a6273" font-weight="600">HARNESS</text>
+    <text x="20" y="250" font-size="12" fill="#5a6273" font-weight="600">EXECUTOR</text>
+    <text x="20" y="390" font-size="12" fill="#5a6273" font-weight="600">POLICY</text>
+    <text x="20" y="500" font-size="12" fill="#5a6273" font-weight="600">AGENT</text>
+
+    <!-- CONFIG -->
+    <rect x="150" y="14" width="290" height="60" rx="8" fill="#d9efe0" stroke="#3f9d68" stroke-width="1.5"/>
+    <text x="295" y="38" font-size="13.5" fill="#12151c" text-anchor="middle" font-weight="600">acp: config block</text>
+    <text x="295" y="57" font-size="11.5" fill="#262c38" text-anchor="middle">{slug:"grok", command:"grok agent stdio"}</text>
+
+    <!-- HARNESS -->
+    <rect x="150" y="104" width="290" height="66" rx="8" fill="#dfe7f3" stroke="#6c8ebf" stroke-width="1.5"/>
+    <text x="295" y="130" font-size="13.5" fill="#12151c" text-anchor="middle" font-weight="600">generic acp harness</text>
+    <text x="295" y="149" font-size="11.5" fill="#262c38" text-anchor="middle">_build_acp_spawn_env -&gt;</text>
+    <text x="295" y="163" font-size="11.5" fill="#262c38" text-anchor="middle">HARNESS_ACP_COMMAND</text>
+
+    <!-- EXECUTOR -->
+    <rect x="150" y="214" width="290" height="96" rx="8" fill="#dfe7f3" stroke="#6c8ebf" stroke-width="1.5"/>
+    <text x="295" y="240" font-size="13.5" fill="#12151c" text-anchor="middle" font-weight="600">AcpExecutor</text>
+    <text x="295" y="259" font-size="11.5" fill="#262c38" text-anchor="middle">ACP JSON-RPC client (v1)</text>
+    <text x="295" y="275" font-size="11.5" fill="#262c38" text-anchor="middle">initialize / session.new / prompt</text>
+    <text x="295" y="291" font-size="11.5" fill="#262c38" text-anchor="middle">update -&gt; TextChunk/ToolCallRequest</text>
+    <!-- glue badge -->
+    <rect x="360" y="220" width="72" height="20" rx="10" fill="#d9efe0" stroke="#3f9d68" stroke-width="1.2"/>
+    <text x="396" y="234" font-size="10.5" fill="#12151c" text-anchor="middle">+dialect glue</text>
+
+    <!-- POLICY -->
+    <rect x="150" y="352" width="290" height="72" rx="8" fill="#dfe7f3" stroke="#6c8ebf" stroke-width="1.5"/>
+    <rect x="146" y="348" width="298" height="80" rx="11" fill="none" stroke="#d6b656" stroke-width="2.5" stroke-dasharray="5 4"/>
+    <text x="295" y="378" font-size="13.5" fill="#12151c" text-anchor="middle" font-weight="600">CEL policy engine</text>
+    <text x="295" y="397" font-size="11.5" fill="#262c38" text-anchor="middle">POST /sessions/{id}/policies/evaluate</text>
+    <text x="295" y="413" font-size="11.5" fill="#262c38" text-anchor="middle">ALLOW / DENY / ASK &middot; fail-closed</text>
+
+    <!-- AGENT -->
+    <rect x="150" y="470" width="290" height="66" rx="8" fill="#f6e2d6" stroke="#c8794a" stroke-width="1.5"/>
+    <text x="295" y="496" font-size="13.5" fill="#12151c" text-anchor="middle" font-weight="600">grok agent stdio  (xAI)</text>
+    <text x="295" y="515" font-size="11.5" fill="#262c38" text-anchor="middle">protocolVersion 1 &middot; grok-4.5</text>
+
+    <!-- vertical flow arrows with seam dots -->
+    <!-- config -> harness -->
+    <line x1="295" y1="74" x2="295" y2="104" stroke="#5a6273" stroke-width="2" marker-end="url(#arrow)"/>
+    <circle cx="295" cy="89" r="4.5" fill="#12151c"/>
+    <text x="305" y="93" font-size="10.5" fill="#3a4150">seam: acp:grok config</text>
+    <!-- harness -> executor -->
+    <line x1="295" y1="170" x2="295" y2="214" stroke="#5a6273" stroke-width="2" marker-end="url(#arrow)"/>
+    <text x="305" y="196" font-size="10.5" fill="#3a4150">spawn env</text>
+    <!-- executor <-> agent (down = prompt, seam) -->
+    <line x1="270" y1="310" x2="270" y2="470" stroke="#5a6273" stroke-width="2" marker-end="url(#arrow)"/>
+    <circle cx="270" cy="390" r="4.5" fill="#12151c"/>
+    <text x="80" y="360" font-size="10.5" fill="#3a4150">session/prompt</text>
+    <!-- agent -> executor (up = updates) -->
+    <line x1="320" y1="470" x2="320" y2="312" stroke="#3f9d68" stroke-width="2" marker-end="url(#arrowg)"/>
+    <text x="328" y="360" font-size="10.5" fill="#2e6b46">session/update</text>
+
+    <!-- request_permission branch: agent -> policy via executor -->
+    <path d="M 445 500 H 640 V 388 H 448" fill="none" stroke="#b8860b" stroke-width="2.2" marker-end="url(#arrowy)"/>
+    <circle cx="640" cy="444" r="4.5" fill="#12151c"/>
+    <text x="470" y="493" font-size="10.5" fill="#7a5b09" font-weight="600">session/request_permission</text>
+    <text x="470" y="475" font-size="10.5" fill="#3a4150">(tool needs approval)</text>
+    <text x="558" y="380" font-size="10.5" fill="#7a5b09" font-weight="600">DENY -&gt; tool blocked</text>
+
+    <!-- side panel: slices -->
+    <rect x="700" y="120" width="320" height="250" rx="9" fill="#ffffff" stroke="#d5dbe4" stroke-width="1.4"/>
+    <text x="716" y="146" font-size="13" fill="#12151c" font-weight="700">Slices map onto the flow</text>
+    <text x="716" y="172" font-size="12" fill="#26445e" font-weight="600">01 &mdash; governed turn (skeleton)</text>
+    <text x="716" y="190" font-size="11.5" fill="#3a4150">config -&gt; harness -&gt; executor -&gt;</text>
+    <text x="716" y="205" font-size="11.5" fill="#3a4150">policy(ALLOW) -&gt; grok. A real reply back.</text>
+    <text x="716" y="232" font-size="12" fill="#7a5b09" font-weight="600">02 &mdash; CEL deny gate (value proof)</text>
+    <text x="716" y="250" font-size="11.5" fill="#3a4150">request_permission -&gt; DENY -&gt; shell</text>
+    <text x="716" y="265" font-size="11.5" fill="#3a4150">tool blocked before it runs.</text>
+    <text x="716" y="292" font-size="12" fill="#26445e" font-weight="600">03 &mdash; override + interrupt + cost</text>
+    <text x="716" y="310" font-size="11.5" fill="#3a4150">model in session/new, session/cancel,</text>
+    <text x="716" y="325" font-size="11.5" fill="#3a4150">_meta.usage, acp bench matrix.</text>
+    <text x="716" y="352" font-size="11" fill="#8a5a00" font-style="italic">Fallback (kill-escape): grok x.ai/hooks</text>
+    <text x="716" y="366" font-size="11" fill="#8a5a00" font-style="italic">pre_tool_use -&gt; same /policies/evaluate.</text>
+
+    <defs>
+      <marker id="arrow" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 z" fill="#5a6273"/></marker>
+      <marker id="arrowg" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 z" fill="#3f9d68"/></marker>
+      <marker id="arrowy" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 z" fill="#b8860b"/></marker>
+    </defs>
+  </svg>
+  </div>
+
+  <p class="note"><b>Read it top to bottom.</b> A prompt enters through the <b>acp:grok</b> config (the one thing created), which the generic <b>acp harness</b> resolves into a spawn command. <b>AcpExecutor</b> (reused) opens ACP over <code>grok agent stdio</code> and streams grok's output back as Omnigent events. The governance boundary (dashed gold) is the whole point: when grok asks to run a tool it emits <b>session/request_permission</b>, which AcpExecutor already routes to the <b>CEL policy engine</b> &mdash; a DENY blocks the tool before it executes. The two black dots are the only new frozen seams: the <code>acp:grok</code> config schema and grok's ACP dialect against AcpExecutor's expectations. If grok ever self-executes without asking permission, the fallback re-gates via grok's own <code>x.ai/hooks pre_tool_use</code> into the same policy endpoint.</p>
+</div>
+</body>
+</html>
